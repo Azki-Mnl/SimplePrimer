@@ -2,3 +2,4 @@ streamlit
 biopython
 pandas
 plotly
+matplotlib
