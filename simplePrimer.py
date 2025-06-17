@@ -20,7 +20,7 @@ DEFAULT_PARAMS = {
     'min_amplicon': 100,
     'max_amplicon': 1000,
     'max_dimer_score': 4,
-    'min_primer_distance': 50  # Minimum distance between primer pairs
+    'min_primer_distance': 50
 }
 
 EXAMPLE_SEQUENCE = """>Example DNA Sequence
@@ -142,6 +142,42 @@ def find_optimal_pairs(fwd_primers, rev_primers, seq_len, params):
     selected_pairs.sort(key=lambda x: x['fwd_pos'])
     
     return selected_pairs
+
+def style_dataframe(df):
+    """Style the results dataframe with highlights and gradients"""
+    # Find best scores
+    best_quality = df['Quality Score'].min()
+    best_dimer = df['Dimer Score'].min()
+    
+    def highlight_row(row):
+        styles = [''] * len(row)
+        if row['Quality Score'] == best_quality:
+            styles[df.columns.get_loc('Quality Score')] = 'background-color: yellow'
+        if row['Dimer Score'] == best_dimer:
+            styles[df.columns.get_loc('Dimer Score')] = 'background-color: lightgreen'
+        return styles
+    
+    styled_df = df.style.apply(highlight_row, axis=1)
+    
+    # Add gradients (more compatible version)
+    try:
+        styled_df = styled_df.background_gradient(
+            subset=['Quality Score'], 
+            cmap='YlOrRd_r',
+            vmin=df['Quality Score'].min(),
+            vmax=df['Quality Score'].max()
+        )
+        styled_df = styled_df.background_gradient(
+            subset=['Dimer Score'], 
+            cmap='Greens_r',
+            vmin=df['Dimer Score'].min(),
+            vmax=df['Dimer Score'].max()
+        )
+    except:
+        # Fallback if gradient fails
+        pass
+    
+    return styled_df
 
 def plot_primers(seq_len, pairs, primer_len):
     """Visualize primer binding positions"""
@@ -300,7 +336,7 @@ def setup_page():
     st.markdown("""
         <h1 style="text-align:center; color: #080740; margin-bottom: 0.5rem;">SimplePrimer</h1>
         <p style="text-align:center; font-size: 1.2rem; color: #13131f; margin-bottom: 2rem;">
-        Automated Primer Design for PCR</p>
+        Automated PCR Primer Design</p>
     """, unsafe_allow_html=True)
 
 # --- Main App ---
@@ -507,7 +543,7 @@ def main():
             if st.session_state.get('primers_ready', False) and st.session_state.get('pairs'):
                 st.subheader("🔍 Results (Best Primers First)")
                 
-                # Create results table with highlighting
+                # Create results table
                 results = []
                 for i, pair in enumerate(st.session_state.pairs, 1):
                     results.append({
@@ -527,22 +563,15 @@ def main():
                 
                 df = pd.DataFrame(results)
                 
-                # Apply styling - highlight best scores
-                def highlight_best(s):
-                    if s.name == 'Quality Score':
-                        best = s.min()
-                        return ['background-color: yellow' if v == best else '' for v in s]
-                    elif s.name == 'Dimer Score':
-                        best = s.min()
-                        return ['background-color: lightgreen' if v == best else '' for v in s]
-                    return [''] * len(s)
-                
-                st.dataframe(
-                    df.style.apply(highlight_best)
-                      .background_gradient(subset=['Quality Score'], cmap='YlOrRd_r')  # Reverse so red is bad
-                      .background_gradient(subset=['Dimer Score'], cmap='Greens_r')    # Green is good
-                      .format({'Quality Score': "{:.2f}"})
-                )
+                # Display the styled dataframe
+                try:
+                    st.dataframe(
+                        style_dataframe(df),
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.warning("Couldn't apply advanced styling to the table")
+                    st.dataframe(df)  # Fallback to basic table
                 
                 # Create FASTA output
                 fasta_out = []
