@@ -138,61 +138,7 @@ def find_optimal_pairs(fwd_primers, rev_primers, seq_len, params):
             if len(selected_pairs) >= 10:  # Limit to top 10 pairs
                 break
     
-    # Resort the selected pairs by position while maintaining quality
-    selected_pairs.sort(key=lambda x: x['fwd_pos'])
-    
     return selected_pairs
-
-def style_dataframe(df):
-    """Style the results dataframe with highlights and gradients"""
-    try:
-        # Make a copy to avoid modifying the original
-        styled_df = df.copy()
-        
-        # Convert scores to numeric if they aren't already
-        styled_df['Quality Score'] = pd.to_numeric(styled_df['Quality Score'], errors='coerce')
-        styled_df['Dimer Score'] = pd.to_numeric(styled_df['Dimer Score'], errors='coerce')
-        
-        # Create styled dataframe
-        styler = styled_df.style
-        
-        # Highlight best scores if we have valid data
-        if not styled_df.empty and 'Quality Score' in styled_df.columns and 'Dimer Score' in styled_df.columns:
-            best_quality = styled_df['Quality Score'].min()
-            best_dimer = styled_df['Dimer Score'].min()
-            
-            def highlight_best(row):
-                styles = [''] * len(row)
-                if row['Quality Score'] == best_quality:
-                    styles[styled_df.columns.get_loc('Quality Score')] = 'background-color: yellow'
-                if row['Dimer Score'] == best_dimer:
-                    styles[styled_df.columns.get_loc('Dimer Score')] = 'background-color: lightgreen'
-                return styles
-            
-            styler = styler.apply(highlight_best, axis=1)
-            
-            # Add gradients if we have multiple values
-            if len(styled_df['Quality Score'].unique()) > 1:
-                styler = styler.background_gradient(
-                    subset=['Quality Score'], 
-                    cmap='YlOrRd_r',
-                    vmin=styled_df['Quality Score'].min(),
-                    vmax=styled_df['Quality Score'].max()
-                )
-            
-            if len(styled_df['Dimer Score'].unique()) > 1:
-                styler = styler.background_gradient(
-                    subset=['Dimer Score'], 
-                    cmap='Greens_r',
-                    vmin=styled_df['Dimer Score'].min(),
-                    vmax=styled_df['Dimer Score'].max()
-                )
-        
-        return styler.format({'Quality Score': "{:.2f}"})
-    
-    except Exception as e:
-        st.warning(f"Simplified table display due to styling error: {str(e)}")
-        return df.style  # Return basic unstyled version
 
 def plot_primers(seq_len, pairs, primer_len):
     """Visualize primer binding positions"""
@@ -578,14 +524,17 @@ def main():
                 
                 df = pd.DataFrame(results)
                 
-                # Display the styled dataframe with proper row numbering
+                # Sort by Quality Score (ascending - lower is better)
+                df = df.sort_values(by='Quality Score', ascending=True)
+                
+                # Display the dataframe with proper row numbering
                 try:
                     # Reset index to show row numbers starting from 1
                     display_df = df.reset_index(drop=True)
                     display_df.index = display_df.index + 1  # Start numbering from 1
                     
                     st.dataframe(
-                        style_dataframe(display_df),
+                        display_df,
                         use_container_width=True,
                         height=(len(display_df) + 1) * 35 + 3  # Dynamic height based on rows
                     )
