@@ -19,7 +19,8 @@ DEFAULT_PARAMS = {
     'tm_max': 60,
     'min_amplicon': 100,
     'max_amplicon': 1000,
-    'max_dimer_score': 4
+    'max_dimer_score': 4,
+    'min_primer_distance': 50  # Minimum distance between primer pairs
 }
 
 EXAMPLE_SEQUENCE = """>Example DNA Sequence
@@ -72,14 +73,14 @@ def find_primers(seq, primer_len, gc_min, gc_max, tm_min, tm_max):
     return results
 
 def find_optimal_pairs(fwd_primers, rev_primers, seq_len, params):
-    """Find optimal primer pairs based on multiple criteria"""
-    pairs = []
+    """Find optimal primer pairs with sequential region selection and best pairs first"""
+    # First find all possible valid pairs with their scores
+    all_pairs = []
     for fwd in fwd_primers:
         for rev in rev_primers:
-            # Calculate amplicon size
             amp_size = (seq_len - rev['pos'] - params['primer_len']) - fwd['pos']
             
-            # Check amplicon size constraints
+            # Check basic constraints
             if not (params['min_amplicon'] <= amp_size <= params['max_amplicon']):
                 continue
                 
@@ -92,18 +93,55 @@ def find_optimal_pairs(fwd_primers, rev_primers, seq_len, params):
             tm_diff = abs(fwd['tm'] - rev['tm'])
             gc_diff = abs(fwd['gc'] - rev['gc'])
             
-            pairs.append({
+            # Calculate composite score (lower is better)
+            score = (dimer_score * 0.4) + (tm_diff * 0.3) + (gc_diff * 0.3)
+            
+            all_pairs.append({
                 'fwd': fwd,
                 'rev': rev,
                 'amp_size': amp_size,
                 'dimer_score': dimer_score,
                 'tm_diff': tm_diff,
                 'gc_diff': gc_diff,
-                'score': (dimer_score * 0.4) + (tm_diff * 0.3) + (gc_diff * 0.3)
+                'score': score,
+                'fwd_pos': fwd['pos'],
+                'rev_pos': seq_len - rev['end']
             })
     
-    # Sort by best score (lower is better)
-    return sorted(pairs, key=lambda x: x['score'])
+    # Sort all pairs by score (best first)
+    all_pairs.sort(key=lambda x: x['score'])
+    
+    # Select best non-overlapping pairs
+    selected_pairs = []
+    used_positions = []
+    min_distance = params['min_primer_distance']
+    
+    for pair in all_pairs:
+        # Check if this pair overlaps with any used regions
+        overlap = False
+        fwd_start = pair['fwd_pos']
+        fwd_end = fwd_start + params['primer_len']
+        rev_start = pair['rev_pos']
+        rev_end = rev_start + params['primer_len']
+        
+        for used_start, used_end in used_positions:
+            if (fwd_start < used_end + min_distance and fwd_end > used_start - min_distance) or \
+               (rev_start < used_end + min_distance and rev_end > used_start - min_distance):
+                overlap = True
+                break
+                
+        if not overlap:
+            selected_pairs.append(pair)
+            used_positions.append((fwd_start, fwd_end))
+            used_positions.append((rev_start, rev_end))
+            
+            if len(selected_pairs) >= 10:  # Limit to top 10 pairs
+                break
+    
+    # Resort the selected pairs by position while maintaining quality
+    selected_pairs.sort(key=lambda x: x['fwd_pos'])
+    
+    return selected_pairs
 
 def plot_primers(seq_len, pairs, primer_len):
     """Visualize primer binding positions"""
@@ -415,6 +453,11 @@ def main():
                             0, 8, DEFAULT_PARAMS['max_dimer_score'],
                             help="Lower values reduce primer-dimer potential"
                         )
+                        st.session_state.params['min_primer_distance'] = st.slider(
+                            "Minimum Primer Distance (bp)",
+                            20, 200, DEFAULT_PARAMS['min_primer_distance'],
+                            help="Minimum distance between primer pairs"
+                        )
             
             # Design primers button
             if st.button("🧬 Design Primers", type="primary", help="Find optimal primer pairs"):
@@ -462,9 +505,9 @@ def main():
             
             # Display results if available
             if st.session_state.get('primers_ready', False) and st.session_state.get('pairs'):
-                st.subheader("🔍 Results")
+                st.subheader("🔍 Results (Best Primers First)")
                 
-                # Create results table
+                # Create results table with highlighting
                 results = []
                 for i, pair in enumerate(st.session_state.pairs, 1):
                     results.append({
@@ -478,18 +521,35 @@ def main():
                         'Rev GC%': f"{pair['rev']['gc']:.1f}",
                         'Rev Tm (°C)': f"{pair['rev']['tm']:.1f}",
                         'Amplicon Size': pair['amp_size'],
-                        'Dimer Score': pair['dimer_score']
+                        'Dimer Score': pair['dimer_score'],
+                        'Quality Score': f"{pair['score']:.2f}"
                     })
                 
                 df = pd.DataFrame(results)
-                st.dataframe(df.style.background_gradient(subset=['Dimer Score'], cmap='YlOrRd'))
+                
+                # Apply styling - highlight best scores
+                def highlight_best(s):
+                    if s.name == 'Quality Score':
+                        best = s.min()
+                        return ['background-color: yellow' if v == best else '' for v in s]
+                    elif s.name == 'Dimer Score':
+                        best = s.min()
+                        return ['background-color: lightgreen' if v == best else '' for v in s]
+                    return [''] * len(s)
+                
+                st.dataframe(
+                    df.style.apply(highlight_best)
+                      .background_gradient(subset=['Quality Score'], cmap='YlOrRd_r')  # Reverse so red is bad
+                      .background_gradient(subset=['Dimer Score'], cmap='Greens_r')    # Green is good
+                      .format({'Quality Score': "{:.2f}"})
+                )
                 
                 # Create FASTA output
                 fasta_out = []
                 for i, pair in enumerate(st.session_state.pairs, 1):
-                    fasta_out.append(f">Pair{i}_Fwd_Pos{pair['fwd']['pos']}-{pair['fwd']['end']}")
+                    fasta_out.append(f">Pair{i}_Fwd_Pos{pair['fwd']['pos']}-{pair['fwd']['end']}_Score{pair['score']:.2f}")
                     fasta_out.append(pair['fwd']['seq'])
-                    fasta_out.append(f">Pair{i}_Rev_Pos{len(st.session_state.seq)-pair['rev']['end']}-{len(st.session_state.seq)-pair['rev']['pos']}")
+                    fasta_out.append(f">Pair{i}_Rev_Pos{len(st.session_state.seq)-pair['rev']['end']}-{len(st.session_state.seq)-pair['rev']['pos']}_Score{pair['score']:.2f}")
                     fasta_out.append(pair['rev']['seq'])
                 
                 # Download buttons
