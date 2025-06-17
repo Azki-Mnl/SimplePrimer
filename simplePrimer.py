@@ -145,39 +145,54 @@ def find_optimal_pairs(fwd_primers, rev_primers, seq_len, params):
 
 def style_dataframe(df):
     """Style the results dataframe with highlights and gradients"""
-    # Find best scores
-    best_quality = df['Quality Score'].min()
-    best_dimer = df['Dimer Score'].min()
-    
-    def highlight_row(row):
-        styles = [''] * len(row)
-        if row['Quality Score'] == best_quality:
-            styles[df.columns.get_loc('Quality Score')] = 'background-color: yellow'
-        if row['Dimer Score'] == best_dimer:
-            styles[df.columns.get_loc('Dimer Score')] = 'background-color: lightgreen'
-        return styles
-    
-    styled_df = df.style.apply(highlight_row, axis=1)
-    
-    # Add gradients (more compatible version)
     try:
-        styled_df = styled_df.background_gradient(
-            subset=['Quality Score'], 
-            cmap='YlOrRd_r',
-            vmin=df['Quality Score'].min(),
-            vmax=df['Quality Score'].max()
-        )
-        styled_df = styled_df.background_gradient(
-            subset=['Dimer Score'], 
-            cmap='Greens_r',
-            vmin=df['Dimer Score'].min(),
-            vmax=df['Dimer Score'].max()
-        )
-    except:
-        # Fallback if gradient fails
-        pass
+        # Make a copy to avoid modifying the original
+        styled_df = df.copy()
+        
+        # Convert scores to numeric if they aren't already
+        styled_df['Quality Score'] = pd.to_numeric(styled_df['Quality Score'], errors='coerce')
+        styled_df['Dimer Score'] = pd.to_numeric(styled_df['Dimer Score'], errors='coerce')
+        
+        # Create styled dataframe
+        styler = styled_df.style
+        
+        # Highlight best scores if we have valid data
+        if not styled_df.empty and 'Quality Score' in styled_df.columns and 'Dimer Score' in styled_df.columns:
+            best_quality = styled_df['Quality Score'].min()
+            best_dimer = styled_df['Dimer Score'].min()
+            
+            def highlight_best(row):
+                styles = [''] * len(row)
+                if row['Quality Score'] == best_quality:
+                    styles[styled_df.columns.get_loc('Quality Score')] = 'background-color: yellow'
+                if row['Dimer Score'] == best_dimer:
+                    styles[styled_df.columns.get_loc('Dimer Score')] = 'background-color: lightgreen'
+                return styles
+            
+            styler = styler.apply(highlight_best, axis=1)
+            
+            # Add gradients if we have multiple values
+            if len(styled_df['Quality Score'].unique()) > 1:
+                styler = styler.background_gradient(
+                    subset=['Quality Score'], 
+                    cmap='YlOrRd_r',
+                    vmin=styled_df['Quality Score'].min(),
+                    vmax=styled_df['Quality Score'].max()
+                )
+            
+            if len(styled_df['Dimer Score'].unique()) > 1:
+                styler = styler.background_gradient(
+                    subset=['Dimer Score'], 
+                    cmap='Greens_r',
+                    vmin=styled_df['Dimer Score'].min(),
+                    vmax=styled_df['Dimer Score'].max()
+                )
+        
+        return styler.format({'Quality Score': "{:.2f}"})
     
-    return styled_df
+    except Exception as e:
+        st.warning(f"Simplified table display due to styling error: {str(e)}")
+        return df.style  # Return basic unstyled version
 
 def plot_primers(seq_len, pairs, primer_len):
     """Visualize primer binding positions"""
@@ -563,15 +578,20 @@ def main():
                 
                 df = pd.DataFrame(results)
                 
-                # Display the styled dataframe
+                # Display the styled dataframe with proper row numbering
                 try:
+                    # Reset index to show row numbers starting from 1
+                    display_df = df.reset_index(drop=True)
+                    display_df.index = display_df.index + 1  # Start numbering from 1
+                    
                     st.dataframe(
-                        style_dataframe(df),
-                        use_container_width=True
+                        style_dataframe(display_df),
+                        use_container_width=True,
+                        height=(len(display_df) + 1) * 35 + 3  # Dynamic height based on rows
                     )
                 except Exception as e:
-                    st.warning("Couldn't apply advanced styling to the table")
-                    st.dataframe(df)  # Fallback to basic table
+                    st.error(f"Error displaying table: {str(e)}")
+                    st.dataframe(df)  # Fallback to basic dataframe display
                 
                 # Create FASTA output
                 fasta_out = []
